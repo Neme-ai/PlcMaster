@@ -1,0 +1,53 @@
+# ===== Qt Creator / qmake generated =====
+*.pro.user
+.qmake.stash
+Makefile
+Makefile.*
+moc_*.cpp
+moc_*.h
+ui_*.h
+qrc_*.cpp
+*.autosave
+
+# ===== Build folders (if someone builds inside repo) =====
+build-*/
+debug/
+release/
+
+# ===== MSVC / Windows build artifacts =====
+*.obj
+*.o
+*.ilk
+*.pdb
+*.idb
+*.ipdb
+*.iobj
+*.tlog
+*.log
+*.pch
+*.res
+*.exp
+*.manifest
+
+# 默认不提交二进制
+*.exe
+*.dll
+*.lib
+
+# 例外：允许提交 Snap7 三件套
+!thirdparty/snap7/**/snap7.dll
+!thirdparty/snap7/**/snap7.lib
+!thirdparty/snap7/**/snap7.h
+
+# 允许提交你的样式文件
+!style/light.qss
+
+# ===== IDE =====
+.vs/
+.vscode/
+*.suo
+*.user
+
+# ===== OS junk =====
+Thumbs.db
+.DS_Store

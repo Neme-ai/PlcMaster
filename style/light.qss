@@ -1,0 +1,131 @@
+/* ======================
+   Global
+====================== */
+QWidget {
+    font-family: "Microsoft YaHei";
+    font-size: 10pt;
+    background: #F5F7FA;
+    color: #1F2328;
+}
+
+/* 让输入控件更像 VOFA */
+QLineEdit, QSpinBox {
+    background: #FFFFFF;
+    border: 1px solid #D7DCE3;
+    border-radius: 6px;
+    padding: 6px 8px;
+    selection-background-color: #2F80ED;
+}
+QLineEdit:focus, QSpinBox:focus {
+    border: 1px solid #2F80ED;
+}
+
+/* Checkbox 更简洁 */
+QCheckBox { spacing: 8px; }
+QCheckBox::indicator { width: 16px; height: 16px; }
+QCheckBox::indicator:unchecked {
+    border: 1px solid #C9D1DB;
+    background: #FFFFFF;
+    border-radius: 4px;
+}
+QCheckBox::indicator:checked {
+    border: 1px solid #2F80ED;
+    background: #2F80ED;
+    border-radius: 4px;
+}
+
+/* ======================
+   Buttons
+====================== */
+/* 主按钮 */
+QPushButton[btnType="primary"] {
+    background: #2F80ED;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    min-height: 30px;
+}
+QPushButton[btnType="primary"]:hover  { background: #256FE0; }
+QPushButton[btnType="primary"]:pressed{ background: #1E5FCC; }
+QPushButton[btnType="primary"]:disabled{ background: #B9C7DA; color: #EEF3FA; }
+
+/* 次按钮（灰底描边） */
+QPushButton[btnType="secondary"] {
+    background: #FFFFFF;
+    color: #1F2328;
+    border: 1px solid #D7DCE3;
+    border-radius: 6px;
+    padding: 7px 14px;
+    min-height: 30px;
+}
+QPushButton[btnType="secondary"]:hover { background: #EEF2F7; }
+QPushButton[btnType="secondary"]:pressed { background: #E6ECF5; }
+
+/* 危险按钮（可选：Remove） */
+QPushButton[btnType="danger"] {
+    background: #FFF5F5;
+    color: #B42318;
+    border: 1px solid #F5C2C7;
+    border-radius: 6px;
+    padding: 7px 14px;
+    min-height: 30px;
+}
+QPushButton[btnType="danger"]:hover { background: #FFE8E8; }
+
+/* ======================
+   GroupBox -> Card
+====================== */
+QGroupBox {
+    border: 1px solid #E3E7EE;
+    border-radius: 10px;
+    margin-top: 14px;
+    background: #FFFFFF;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: #111827;
+    font-weight: 600;
+}
+
+/* ======================
+   Point Tiles (16个卡片)
+   通过 property: tile="point"
+====================== */
+QFrame[tile="point"] {
+    background: #FFFFFF;
+    border: 1px solid #E3E7EE;
+    border-radius: 10px;
+}
+QFrame[tile="point"][state="on"]  { border: 1px solid #B8E2C8; }
+QFrame[tile="point"][state="off"] { border: 1px solid #E3E7EE; }
+QFrame[tile="point"][state="na"]  { border: 1px dashed #D7DCE3; }
+
+QLabel[role="addr"] {
+    font-family: "Consolas";
+    font-size: 9pt;
+    color: #6B7280;
+}
+QLabel[role="val"] {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #6B7280; /* 默认灰 */
+}
+QLabel[role="val"][v="1"] { color: #1E9E52; }
+QLabel[role="val"][v="0"] { color: #6B7280; }
+
+/* ======================
+   Status Label
+====================== */
+QLabel#lblStatus[st="ok"]   { color: #1E9E52; font-weight: 600; }
+QLabel#lblStatus[st="bad"]  { color: #B42318; font-weight: 600; }
+QLabel#lblStatus[st="idle"] { color: #6B7280; font-weight: 600; }
+
+/* RW Result */
+QLabel#lblRwResult {
+    color: #6B7280;
+}
+QLabel#lblRwResult[rt="ok"]  { color: #1E9E52; font-weight: 600; }
+QLabel#lblRwResult[rt="bad"] { color: #B42318; font-weight: 600; }

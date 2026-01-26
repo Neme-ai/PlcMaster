@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>500</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>800</width>
+    <height>500</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout_2" stretch="1,6,1">
+    <item>
+     <widget class="QGroupBox" name="groupBoxPLCConnection">
+      <property name="title">
+       <string>PLC Connection</string>
+      </property>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <item>
+        <widget class="QLabel" name="label">
+         <property name="text">
+          <string>IP Address</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="lineEditIp">
+         <property name="text">
+          <string>192.168.2.1</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btnConnect">
+         <property name="text">
+          <string>Connect</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="lblStatus">
+         <property name="text">
+          <string>Disconnected</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_conn">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="3,2">
+      <property name="spacing">
+       <number>16</number>
+      </property>
+      <item>
+       <widget class="QGroupBox" name="grpPoints">
+        <property name="title">
+         <string>Points Monitor (Max 16)</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_points">
+         <item>
+          <widget class="QWidget" name="pointsContainer" native="true">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>260</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QGroupBox" name="grpRw">
+        <property name="title">
+         <string>Data Read/Write (One Point)</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_rw">
+         <item>
+          <layout class="QHBoxLayout" name="rwLine1">
+           <item>
+            <widget class="QLabel" name="labelRwAddr">
+             <property name="text">
+              <string>Address</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="lineEditRwAddr">
+             <property name="text">
+              <string>M3.0</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnReadOne">
+             <property name="text">
+              <string>Read</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="rwLine2">
+           <item>
+            <widget class="QLabel" name="labelWriteVal">
+             <property name="text">
+              <string>Write(0/1)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="lineEditWriteValue">
+             <property name="text">
+              <string>1</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnWriteOne">
+             <property name="text">
+              <string>Write</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QLabel" name="lblRwResult">
+           <property name="text">
+            <string>-</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="verticalSpacer_rw">
+           <property name="orientation">
+            <enum>Qt::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_3" stretch="0,0,1,0,0">
+      <item>
+       <widget class="QSpinBox" name="spinInterval">
+        <property name="minimum">
+         <number>20</number>
+        </property>
+        <property name="maximum">
+         <number>5000</number>
+        </property>
+        <property name="value">
+         <number>200</number>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="chkAuto">
+        <property name="text">
+         <string>Auto Refresh</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLineEdit" name="lineEditAddr">
+        <property name="text">
+         <string>I0.0</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnAdd">
+        <property name="text">
+         <string>Add</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnRemove">
+        <property name="text">
+         <string>Remove</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menutest">
+    <property name="title">
+     <string>test</string>
+    </property>
+   </widget>
+   <addaction name="menutest"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
