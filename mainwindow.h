@@ -49,6 +49,13 @@ private:
     void setTileValue(int idx, int v);
     void setUiConnected(bool connected);
 
+    // --- Points config (points.json in exe folder) ---
+    QString configFilePath() const;
+    bool loadPointConfig(QString* errOut = nullptr);
+    bool savePointConfig(QString* errOut = nullptr) const;
+    void syncPointsToWorker();
+
+
 private:
     Ui::MainWindow *ui;
 

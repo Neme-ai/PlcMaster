@@ -5,6 +5,16 @@
 #include <QStyle>
 #include <QApplication>
 
+#include <QFile>
+#include <QSaveFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonParseError>
+#include <QCoreApplication>
+#include <QDir>
+#include <QDebug>
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
@@ -20,13 +30,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 初始化 16 个 tile
     initTiles();
-    refreshTiles();
+    loadPointConfig();  // 自动从 exe 同级 points.json 恢复
+
 
     // Worker 线程
     m_thread = new QThread(this);
     m_worker = new PlcWorker();
     m_worker->moveToThread(m_thread);
     m_thread->start();
+    syncPointsToWorker();
 
     // UI signals
     connect(ui->btnConnect, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
@@ -78,6 +90,131 @@ MainWindow::~MainWindow()
 
 void MainWindow::setUiConnected(bool connected) {
     ui->btnConnect->setText(connected ? "Disconnect" : "Connect");
+}
+QString MainWindow::configFilePath() const
+{
+    // points.json 放在 exe 同级目录
+    return QCoreApplication::applicationDirPath() + "/points.json";
+}
+
+void MainWindow::syncPointsToWorker()
+{
+    if (!m_worker) return;
+
+    // 先清空 worker 侧点位，再按 m_points 顺序重新灌入
+    QMetaObject::invokeMethod(m_worker, "clearPoints", Qt::QueuedConnection);
+
+    for (const auto& p : m_points) {
+        int areaInt = (p.area==Area::I) ? 0 : (p.area==Area::Q) ? 1 : 2;
+        QMetaObject::invokeMethod(m_worker, "addPoint", Qt::QueuedConnection,
+                                  Q_ARG(int, areaInt),
+                                  Q_ARG(int, p.byteIndex),
+                                  Q_ARG(int, p.bitIndex),
+                                  Q_ARG(QString, p.text));
+    }
+}
+
+bool MainWindow::savePointConfig(QString* errOut) const
+{
+    QJsonObject root;
+    root["version"] = 1;
+
+    QJsonArray arr;
+    for (const auto& p : m_points) {
+        arr.append(p.text); // 规范化后的 "I0.0"/"Q1.3"/"M10.7"
+    }
+    root["points"] = arr;
+
+    const QString path = configFilePath();
+
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errOut) *errOut = "Open config for write failed: " + path;
+        return false;
+    }
+
+    QJsonDocument doc(root);
+    const QByteArray data = doc.toJson(QJsonDocument::Indented);
+
+    if (f.write(data) != data.size()) {
+        if (errOut) *errOut = "Write config failed: " + path;
+        return false;
+    }
+
+    if (!f.commit()) {
+        if (errOut) *errOut = "Commit config failed: " + path;
+        return false;
+    }
+
+#ifdef QT_DEBUG
+    qDebug() << "[Config] Saved:" << path;
+#endif
+    return true;
+}
+
+bool MainWindow::loadPointConfig(QString* errOut)
+{
+    const QString path = configFilePath();
+    QFile f(path);
+
+    if (!f.exists()) {
+#ifdef QT_DEBUG
+        qDebug() << "[Config] Not found, skip:" << path;
+#endif
+        return true; // 第一次运行没有配置很正常
+    }
+
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (errOut) *errOut = "Open config for read failed: " + path;
+        return false;
+    }
+
+    QJsonParseError pe;
+    QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+        if (errOut) *errOut = "Config JSON parse failed: " + pe.errorString();
+        return false;
+    }
+
+    QJsonObject root = doc.object();
+    QJsonArray arr = root.value("points").toArray();
+
+    QVector<Point> loaded;
+    loaded.reserve(16);
+
+    // 去重（大小写不敏感）
+    QSet<QString> seen;
+
+    for (const auto& v : arr) {
+        if (loaded.size() >= 16) break;
+
+        QString raw = v.toString().trimmed();
+        if (raw.isEmpty()) continue;
+
+        Area area; int byteIndex=0, bitIndex=0; QString norm, perr;
+        if (!parseAddrLocal(raw, area, byteIndex, bitIndex, norm, perr)) {
+#ifdef QT_DEBUG
+            qDebug() << "[Config] Skip invalid point:" << raw << "reason:" << perr;
+#endif
+            continue;
+        }
+
+        QString key = norm.toUpper();
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+
+        Point p; p.area=area; p.byteIndex=byteIndex; p.bitIndex=bitIndex; p.text=norm;
+        loaded.push_back(p);
+    }
+
+    m_points = loaded;
+    refreshTiles();       // 先恢复UI
+    syncPointsToWorker(); // 再同步到 worker
+
+#ifdef QT_DEBUG
+    qDebug() << "[Config] Loaded count:" << m_points.size() << "from" << path;
+#endif
+    return true;
 }
 
 void MainWindow::initTiles() {
@@ -250,6 +387,10 @@ void MainWindow::onAddClicked() {
     Point p; p.area=area; p.byteIndex=byteIndex; p.bitIndex=bitIndex; p.text=norm;
     m_points.push_back(p);
     refreshTiles();
+    QString saveErr;
+    if (!savePointConfig(&saveErr)) {
+        QMessageBox::warning(this, "Save config failed", saveErr);
+    }
 
     int areaInt = (area==Area::I) ? 0 : (area==Area::Q) ? 1 : 2;
     QMetaObject::invokeMethod(m_worker, "addPoint", Qt::QueuedConnection,
@@ -274,6 +415,10 @@ void MainWindow::onRemoveClicked() {
 
     m_points.removeAt(idx);
     refreshTiles();
+    QString saveErr;
+    if (!savePointConfig(&saveErr)) {
+        QMessageBox::warning(this, "Save config failed", saveErr);
+    }
 
     QMetaObject::invokeMethod(m_worker, "removePoint", Qt::QueuedConnection, Q_ARG(int, idx));
 }
@@ -356,6 +501,7 @@ void MainWindow::onOneWriteResult(bool ok, const QString& err) {
 
 void MainWindow::closeEvent(QCloseEvent* e)
 {
+    savePointConfig();
     // 关闭时先禁止UI触发新的调用
     ui->chkAuto->blockSignals(true);
     ui->spinInterval->blockSignals(true);
