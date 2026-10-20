@@ -1,516 +1,226 @@
-﻿#include "mainwindow.h"
-#include "ui_mainwindow.h"
-#include <QMessageBox>
-#include <QMetaObject>
-#include <QStyle>
-#include <QApplication>
-
+#include "mainwindow.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QSpinBox>
 #include <QFile>
-#include <QSaveFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QJsonParseError>
-#include <QCoreApplication>
-#include <QDir>
+#include <QDateTime>
+#include <QApplication>
+#include <QTimer>
 #include <QDebug>
-
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), ui(new Ui::MainWindow) {
-    ui->setupUi(this);
-
-    ui->btnConnect->setProperty("btnType","primary");
-    ui->btnReadOne->setProperty("btnType","primary");
-
-    ui->btnWriteOne->setProperty("btnType","secondary");
-    ui->btnAdd->setProperty("btnType","secondary");
-    ui->btnRemove->setProperty("btnType","danger");
-
-
-
-    // 初始化 16 个 tile
-    initTiles();
-    loadPointConfig();  // 自动从 exe 同级 points.json 恢复
-
-
-    // Worker 线程
-    m_thread = new QThread(this);
-    m_worker = new PlcWorker();
-    m_worker->moveToThread(m_thread);
-    m_thread->start();
-    syncPointsToWorker();
-
-    // UI signals
-    connect(ui->btnConnect, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
-    connect(ui->chkAuto, &QCheckBox::stateChanged, this, &MainWindow::onAutoChanged);
-    connect(ui->spinInterval, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::onIntervalChanged);
-
-    connect(ui->btnAdd, &QPushButton::clicked, this, &MainWindow::onAddClicked);
-    connect(ui->btnRemove, &QPushButton::clicked, this, &MainWindow::onRemoveClicked);
-
-    connect(ui->btnReadOne, &QPushButton::clicked, this, &MainWindow::onReadOneClicked);
-    connect(ui->btnWriteOne, &QPushButton::clicked, this, &MainWindow::onWriteOneClicked);
-
-    // Worker -> UI
-    connect(m_worker, &PlcWorker::connectedResult, this, &MainWindow::onWorkerConnected);
-    connect(m_worker, &PlcWorker::statusText, this, &MainWindow::onStatusText);
-    connect(m_worker, &PlcWorker::pointsUpdated, this, &MainWindow::onPointsUpdated);
-    connect(m_worker, &PlcWorker::oneReadResult, this, &MainWindow::onOneReadResult);
-    connect(m_worker, &PlcWorker::oneWriteResult, this, &MainWindow::onOneWriteResult);
-
-    ui->lblStatus->setText("Disconnected");
-    ui->lblRwResult->setText("-");
-    setUiConnected(false);
-}
-
-MainWindow::~MainWindow()
-{
-    // 1) 先要求 worker 停止定时器 + 断开PLC（用 queued，确保在worker线程执行）
-    if (m_worker) {
-        QMetaObject::invokeMethod(m_worker, "setAutoRefresh", Qt::QueuedConnection,
-                                  Q_ARG(bool, false), Q_ARG(int, ui->spinInterval->value()));
-        QMetaObject::invokeMethod(m_worker, "disconnectPlc", Qt::QueuedConnection);
+#include <QDir>
+MainWindow::MainWindow(QWidget *parent):QMainWindow(parent),worker(new PlcWorker) {
+    setWindowTitle(QStringLiteral("PLCmaster · 47 点监控与手动写入")); resize(1400,1000);
+    auto root=new QWidget(this); setCentralWidget(root); auto layout=new QVBoxLayout(root);
+    auto title=new QLabel(QStringLiteral("转台与导轨 · PLC 实时监控"));
+    title->setStyleSheet("font-size:22px;font-weight:600;"); layout->addWidget(title);
+    layout->addWidget(new QLabel(QStringLiteral("47 个预置点位 ｜ 写入默认关闭 ｜ 0/1 为原始位值，含义以 PLC 程序为准")));
+    auto bar=new QHBoxLayout; layout->addLayout(bar);
+    ip=new QLineEdit("192.168.3.2"); ip->setMaximumWidth(160); bar->addWidget(new QLabel("PLC IP")); bar->addWidget(ip);
+    button=new QPushButton(QStringLiteral("连接")); bar->addWidget(button);
+    auto interval=new QSpinBox; interval->setRange(5,5000); interval->setValue(200); interval->setSuffix(" ms");
+    bar->addWidget(new QLabel(QStringLiteral("刷新周期"))); bar->addWidget(interval);
+    status=new QLabel(QStringLiteral("未连接")); status->setMinimumWidth(420); status->setWordWrap(true); bar->addWidget(status); bar->addStretch();
+    faultIndicator=new QLabel; faultIndicator->setMinimumWidth(220); bar->addWidget(faultIndicator);
+    setFaultValue(-1);
+    connect(worker,&PlcWorker::faultUpdated,this,[this](int value){setFaultValue(value);});
+    auto filters=new QHBoxLayout; layout->addLayout(filters);
+    group=new QComboBox; group->addItem(QStringLiteral("全部分组")); filters->addWidget(group);
+    search=new QLineEdit; search->setPlaceholderText(QStringLiteral("搜索变量名、地址或中文说明")); filters->addWidget(search);
+    table=new QTableWidget(0,6); table->setHorizontalHeaderLabels({QStringLiteral("分组"),QStringLiteral("变量名"),QStringLiteral("地址"),QStringLiteral("状态"),QStringLiteral("中文说明"),QStringLiteral("信号方向")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers); table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setAlternatingRowColors(true); table->verticalHeader()->hide(); table->setSortingEnabled(false);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(4,QHeaderView::Stretch); layout->addWidget(table);
+    updated=new QLabel(QStringLiteral("尚未取得有效数据；短脉冲可能短于刷新周期，无法保证捕获。")); layout->addWidget(updated);
+    timingLabel=new QLabel(QStringLiteral("实际刷新间隔：— ｜ 读取耗时：—")); layout->addWidget(timingLabel);
+    timingLabel->setToolTip(QStringLiteral("实际刷新间隔：通信线程相邻两轮开始时间之差；读取耗时：本轮 M5.0 与 M20–M28 两次读取总耗时。首轮间隔为空，包含网络等待，不含界面绘制。"));
+    connect(worker,&PlcWorker::pollingTiming,this,[this](double intervalMs,double readMs,bool success){
+        timingLabel->setText(QStringLiteral("实际刷新间隔：%1 ms ｜ 读取耗时：%2 ms%3")
+            .arg(intervalMs<0?QStringLiteral("—"):QString::number(intervalMs,'f',2))
+            .arg(readMs,0,'f',2).arg(success?QString():QStringLiteral(" ｜ 本轮读取失败")));
+    });
+    setupWriteControls(layout);
+    worker->moveToThread(&thread); connect(&thread,&QThread::finished,worker,&QObject::deleteLater); thread.start();
+    QFile points(":/points.txt"); points.open(QIODevice::ReadOnly);
+    const auto lines=QString::fromUtf8(points.readAll()).remove(QChar(0xfeff)).split('\n',QString::SkipEmptyParts);
+    for(const auto &line:lines) {
+        const auto p=line.trimmed().split('|'); if(p.size()!=4) continue;
+        int row=table->rowCount(); table->insertRow(row);
+        QString direction=row<20?QStringLiteral("转台程序 → PLC"):QStringLiteral("PLC → 转台程序");
+        QStringList cells={p[3],p[0],p[1],QStringLiteral("未知"),p[2],direction};
+        for(int c=0;c<6;++c) { auto item=new QTableWidgetItem(cells[c]); item->setToolTip(cells[c]); table->setItem(row,c,item); }
+        if(group->findText(p[3])<0) group->addItem(p[3]);
+        const auto address=p[1].mid(1).split('.');
+        QMetaObject::invokeMethod(worker,"addPoint",Qt::QueuedConnection,Q_ARG(int,2),Q_ARG(int,address[0].toInt()),Q_ARG(int,address[1].toInt()),Q_ARG(QString,p[0]));
     }
-
-    // 2) 让 worker 在所属线程里销毁
-    if (m_worker) {
-        m_worker->deleteLater();
-        m_worker = nullptr;
-    }
-
-    // 3) 退出线程并等待真正结束
-    if (m_thread) {
-        m_thread->quit();
-        m_thread->wait();   // 这里不要给500ms，直接等，关闭时就等一下是正常的
-        m_thread = nullptr;
-    }
-
-    delete ui;
-}
-
-void MainWindow::setUiConnected(bool connected) {
-    ui->btnConnect->setText(connected ? "Disconnect" : "Connect");
-}
-QString MainWindow::configFilePath() const
-{
-    // points.json 放在 exe 同级目录
-    return QCoreApplication::applicationDirPath() + "/points.json";
-}
-
-void MainWindow::syncPointsToWorker()
-{
-    if (!m_worker) return;
-
-    // 先清空 worker 侧点位，再按 m_points 顺序重新灌入
-    QMetaObject::invokeMethod(m_worker, "clearPoints", Qt::QueuedConnection);
-
-    for (const auto& p : m_points) {
-        int areaInt = (p.area==Area::I) ? 0 : (p.area==Area::Q) ? 1 : 2;
-        QMetaObject::invokeMethod(m_worker, "addPoint", Qt::QueuedConnection,
-                                  Q_ARG(int, areaInt),
-                                  Q_ARG(int, p.byteIndex),
-                                  Q_ARG(int, p.bitIndex),
-                                  Q_ARG(QString, p.text));
-    }
-}
-
-bool MainWindow::savePointConfig(QString* errOut) const
-{
-    QJsonObject root;
-    root["version"] = 1;
-
-    QJsonArray arr;
-    for (const auto& p : m_points) {
-        arr.append(p.text); // 规范化后的 "I0.0"/"Q1.3"/"M10.7"
-    }
-    root["points"] = arr;
-
-    const QString path = configFilePath();
-
-    QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        if (errOut) *errOut = "Open config for write failed: " + path;
-        return false;
-    }
-
-    QJsonDocument doc(root);
-    const QByteArray data = doc.toJson(QJsonDocument::Indented);
-
-    if (f.write(data) != data.size()) {
-        if (errOut) *errOut = "Write config failed: " + path;
-        return false;
-    }
-
-    if (!f.commit()) {
-        if (errOut) *errOut = "Commit config failed: " + path;
-        return false;
-    }
-
-#ifdef QT_DEBUG
-    qDebug() << "[Config] Saved:" << path;
-#endif
-    return true;
-}
-
-bool MainWindow::loadPointConfig(QString* errOut)
-{
-    const QString path = configFilePath();
-    QFile f(path);
-
-    if (!f.exists()) {
-#ifdef QT_DEBUG
-        qDebug() << "[Config] Not found, skip:" << path;
-#endif
-        return true; // 第一次运行没有配置很正常
-    }
-
-    if (!f.open(QIODevice::ReadOnly)) {
-        if (errOut) *errOut = "Open config for read failed: " + path;
-        return false;
-    }
-
-    QJsonParseError pe;
-    QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &pe);
-    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (errOut) *errOut = "Config JSON parse failed: " + pe.errorString();
-        return false;
-    }
-
-    QJsonObject root = doc.object();
-    QJsonArray arr = root.value("points").toArray();
-
-    QVector<Point> loaded;
-    loaded.reserve(16);
-
-    // 去重（大小写不敏感）
-    QSet<QString> seen;
-
-    for (const auto& v : arr) {
-        if (loaded.size() >= 16) break;
-
-        QString raw = v.toString().trimmed();
-        if (raw.isEmpty()) continue;
-
-        Area area; int byteIndex=0, bitIndex=0; QString norm, perr;
-        if (!parseAddrLocal(raw, area, byteIndex, bitIndex, norm, perr)) {
-#ifdef QT_DEBUG
-            qDebug() << "[Config] Skip invalid point:" << raw << "reason:" << perr;
-#endif
-            continue;
+    connect(search,&QLineEdit::textChanged,this,[this]{filter();});
+    connect(group,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{filter();});
+    connect(interval,qOverload<int>(&QSpinBox::valueChanged),this,[this](int n){monitorInterval=n;QMetaObject::invokeMethod(worker,"setInterval",Qt::QueuedConnection,Q_ARG(int,n));});
+    connect(button,&QPushButton::clicked,this,[this,interval]{
+        button->setEnabled(false); invalidate();
+        if(connected) QMetaObject::invokeMethod(worker,"disconnectPlc",Qt::QueuedConnection);
+        else {
+            status->setText(QStringLiteral("正在连接…"));
+            QMetaObject::invokeMethod(worker,"setAutoRefresh",Qt::QueuedConnection,Q_ARG(bool,true),Q_ARG(int,interval->value()));
+            QMetaObject::invokeMethod(worker,"connectToPlc",Qt::QueuedConnection,Q_ARG(QString,ip->text().trimmed()));
         }
-
-        QString key = norm.toUpper();
-        if (seen.contains(key)) continue;
-        seen.insert(key);
-
-        Point p; p.area=area; p.byteIndex=byteIndex; p.bitIndex=bitIndex; p.text=norm;
-        loaded.push_back(p);
-    }
-
-    m_points = loaded;
-    refreshTiles();       // 先恢复UI
-    syncPointsToWorker(); // 再同步到 worker
-
-#ifdef QT_DEBUG
-    qDebug() << "[Config] Loaded count:" << m_points.size() << "from" << path;
-#endif
-    return true;
-}
-
-void MainWindow::initTiles() {
-    // pointsContainer 内做 4x4 网格
-    m_pointsGrid = new QGridLayout(ui->pointsContainer);
-    m_pointsGrid->setContentsMargins(10, 10, 10, 10);
-    m_pointsGrid->setHorizontalSpacing(12);
-    m_pointsGrid->setVerticalSpacing(12);
-
-    for (int r=0; r<4; ++r) m_pointsGrid->setRowStretch(r, 1);
-    for (int c=0; c<4; ++c) m_pointsGrid->setColumnStretch(c, 1);
-
-    m_tiles.resize(16);
-    for (int i=0; i<16; ++i) {
-        int r = i / 4;
-        int c = i % 4;
-
-        QFrame* frame = new QFrame(ui->pointsContainer);
-        frame->setFrameShape(QFrame::StyledPanel);
-        frame->setMinimumHeight(70);
-
-        QVBoxLayout* v = new QVBoxLayout(frame);
-        v->setContentsMargins(8, 6, 8, 6);
-
-        QLabel* addr = new QLabel("-", frame);
-        QLabel* val = new QLabel("-", frame);
-
-        QFont f = val->font();
-        f.setPointSize(20);
-        f.setBold(true);
-        val->setFont(f);
-
-        val->setStyleSheet("color: gray;");
-        v->addWidget(addr);
-        v->addWidget(val);
-
-        frame->setProperty("tile","point");
-        frame->setProperty("state","na");
-
-        addr->setProperty("role","addr");
-        val->setProperty("role","val");
-        val->setProperty("v","na");
-
-        m_pointsGrid->addWidget(frame, r, c);
-        m_tiles[i] = {frame, addr, val};
-    }
-
-    ui->pointsContainer->setLayout(m_pointsGrid);
-}
-
-void MainWindow::refreshTiles() {
-    for (int i=0; i<16; ++i) {
-        if (i < m_points.size()) {
-            m_tiles[i].lblAddr->setText(m_points[i].text);
-            setTileValue(i, -1);
-            m_tiles[i].frame->show();
-        } else {
-            m_tiles[i].lblAddr->setText("-");
-            m_tiles[i].lblVal->setText("-");
-            m_tiles[i].lblVal->setStyleSheet("color: gray;");
-            m_tiles[i].frame->show(); // 也可以 hide()，看你喜欢
+    });
+    connect(worker,&PlcWorker::connectedResult,this,[this](bool ok,const QString &err){
+        connected=ok; button->setEnabled(true); ip->setEnabled(!ok); button->setText(ok?QStringLiteral("断开"):QStringLiteral("连接"));
+        status->setText(ok?QStringLiteral("已连接"):QStringLiteral("连接失败：")+err);
+        if(!ok) invalidate();
+        updateWriteControls();
+    });
+    connect(worker,&PlcWorker::statusText,this,[this](const QString &s){
+        if(s=="Disconnected") { connected=false; button->setEnabled(true); button->setText(QStringLiteral("连接")); ip->setEnabled(true); invalidate(); status->setText(QStringLiteral("已断开 / 连接未建立")); }
+        else if(s!="Connected") status->setText(s);
+    });
+    connect(worker,&PlcWorker::pointsUpdated,this,[this](const QVector<int>& values){
+        bool valid=values.size()==table->rowCount();
+        for(int r=0;r<table->rowCount();++r) {
+            int v=r<values.size()?values[r]:-1; valid=valid&&v>=0;
+            auto item=table->item(r,3); item->setText(v<0?QStringLiteral("失效"):QString::number(v));
+            item->setForeground(v<0?QColor("#777777"):v?QColor("#1769aa"):QColor("#333333"));
         }
-    }
-}
-
-void MainWindow::setTileValue(int idx, int v)
-{
-    if (idx < 0 || idx >= 16) return;
-
-    auto* frame = m_tiles[idx].frame;
-    auto* val   = m_tiles[idx].lblVal;
-
-    if (v == 1) {
-        val->setText("1");
-        val->setProperty("v","1");
-        frame->setProperty("state","on");
-    } else if (v == 0) {
-        val->setText("0");
-        val->setProperty("v","0");
-        frame->setProperty("state","off");
-    } else {
-        val->setText("-");
-        val->setProperty("v","na");
-        frame->setProperty("state","na");
-    }
-
-    // 让QSS立即生效
-    frame->style()->unpolish(frame); frame->style()->polish(frame); frame->update();
-    val->style()->unpolish(val);     val->style()->polish(val);     val->update();
-}
-
-
-bool MainWindow::parseAddrLocal(const QString& in, Area& area, int& byteIndex, int& bitIndex, QString& normalized, QString& err) {
-    QString s = in.trimmed();
-    if (s.size() < 4) { err="Address too short."; return false; }
-    QChar t = s[0].toUpper();
-    if (t!='I' && t!='Q' && t!='M') { err="Only I/Q/M supported."; return false; }
-    int dot = s.indexOf('.');
-    if (dot < 2) { err="Format like I0.0 / Q1.3 / M10.7"; return false; }
-
-    bool ok1=false, ok2=false;
-    int b = s.mid(1, dot-1).toInt(&ok1);
-    int bit = s.mid(dot+1).toInt(&ok2);
-    if (!ok1 || !ok2) { err="Byte/bit parse failed."; return false; }
-    if (b < 0) { err="Byte must be >=0"; return false; }
-    if (bit < 0 || bit > 7) { err="Bit must be 0..7"; return false; }
-
-    if (t=='I') area = Area::I;
-    else if (t=='Q') area = Area::Q;
-    else area = Area::M;
-
-    byteIndex = b;
-    bitIndex = bit;
-    normalized = QString("%1%2.%3").arg(t).arg(byteIndex).arg(bitIndex);
-    return true;
-}
-
-void MainWindow::onConnectClicked() {
-    QString ip = ui->lineEditIp->text().trimmed();
-    if (ip.isEmpty()) { QMessageBox::warning(this, "Hint", "Please input PLC IP."); return; }
-
-    if (ui->btnConnect->text() == "Connect") {
-        QMetaObject::invokeMethod(m_worker, "connectToPlc", Qt::QueuedConnection, Q_ARG(QString, ip));
-    } else {
-        QMetaObject::invokeMethod(m_worker, "disconnectPlc", Qt::QueuedConnection);
-        setUiConnected(false);
-        ui->lblStatus->setText("Disconnected");
-        ui->lblStatus->setProperty("st","idle");
-        ui->lblStatus->style()->unpolish(ui->lblStatus);
-        ui->lblStatus->style()->polish(ui->lblStatus);
-
-    }
-}
-
-void MainWindow::onAutoChanged(int state) {
-    bool enabled = (state == Qt::Checked);
-    int interval = ui->spinInterval->value();
-    QMetaObject::invokeMethod(m_worker, "setAutoRefresh", Qt::QueuedConnection,
-                              Q_ARG(bool, enabled), Q_ARG(int, interval));
-}
-
-void MainWindow::onIntervalChanged(int v) {
-    QMetaObject::invokeMethod(m_worker, "setInterval", Qt::QueuedConnection, Q_ARG(int, v));
-    if (ui->chkAuto->isChecked()) {
-        QMetaObject::invokeMethod(m_worker, "setAutoRefresh", Qt::QueuedConnection,
-                                  Q_ARG(bool, true), Q_ARG(int, v));
-    }
-}
-
-void MainWindow::onAddClicked() {
-    if (m_points.size() >= 16) {
-        QMessageBox::warning(this, "Hint", "Monitor points full (max 16). Remove one first.");
-        return;
-    }
-
-    Area area; int byteIndex=0, bitIndex=0; QString norm, err;
-    if (!parseAddrLocal(ui->lineEditAddr->text(), area, byteIndex, bitIndex, norm, err)) {
-        QMessageBox::warning(this, "Hint", err);
-        return;
-    }
-
-    // 去重
-    for (const auto& p : m_points) {
-        if (p.text.compare(norm, Qt::CaseInsensitive) == 0) {
-            QMessageBox::information(this, "Hint", "Already exists.");
-            return;
+        updated->setText((valid?QStringLiteral("最近有效读取："):QStringLiteral("读取失败，数据失效："))+QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")+QStringLiteral(" ｜ 短脉冲可能漏采"));
+        dataValid=valid; if(valid) dataAge.restart(); updateWriteControls();
+        if(valid) status->setText(QStringLiteral("已连接 · 47 点读取正常"));
+        static int samples=0;
+        if(qApp->arguments().contains("--smoke-test") && (!valid || ++samples>=10)) {
+            QFile out(QCoreApplication::applicationDirPath()+"/smoke-result.txt"); out.open(QIODevice::WriteOnly);
+            out.write(valid?"PASS: 47 points read successfully\n":"FAIL: invalid read\n");
+            out.write((timingLabel->text()+"\n").toUtf8());
+            out.write(("M5.0="+QString::number(faultValue)+"\n").toUtf8());
+            for(int r=0;r<table->rowCount();++r) out.write((table->item(r,1)->text()+" "+table->item(r,2)->text()+"="+table->item(r,3)->text()+"\n").toUtf8()); out.close();
+            grab().save(QCoreApplication::applicationDirPath()+"/monitor-preview.png");
+            QTimer::singleShot(0,qApp,[valid]{qApp->exit(valid?0:2);});
         }
-    }
+    });
+    if(qApp->arguments().contains("--ui-test")) QTimer::singleShot(100,this,[this]{
+        bool ok=table->rowCount()==47;
+        worker->faultUpdated(1); ok=ok&&faultIndicator->text().contains(QStringLiteral("1 · 故障"));
+        search->setText("no-match"); ok=ok&&faultIndicator->isVisible(); search->clear();
+        worker->faultUpdated(0); ok=ok&&faultIndicator->text().contains(QStringLiteral("0 · 无故障"));
+        worker->faultUpdated(-1); ok=ok&&faultIndicator->text().contains(QStringLiteral("状态未知"));
+        connected=true;dataValid=true;dataAge.restart();pulseRunning=true;
+        writeMode->blockSignals(true);writeMode->setChecked(true);writeMode->blockSignals(false);
+        table->selectRow(0);updateWriteControls();ok=ok&&writeZero->isEnabled()&&writeOneButton->isEnabled();
+        table->selectRow(17);updateWriteControls();ok=ok&&!writeZero->isEnabled()&&!writeOneButton->isEnabled();
+        table->selectRow(20);updateWriteControls();ok=ok&&!writeZero->isEnabled();
+        feedbackUnlock->blockSignals(true);feedbackUnlock->setChecked(true);feedbackUnlock->blockSignals(false);
+        updateWriteControls();ok=ok&&writeZero->isEnabled();
+        writeMode->blockSignals(true);writeMode->setChecked(false);writeMode->blockSignals(false);
+        feedbackUnlock->blockSignals(true);feedbackUnlock->setChecked(false);feedbackUnlock->blockSignals(false);
+        connected=false;pulseRunning=false;
+        QVector<int> sample(47,0); sample[45]=1;
+        worker->pointsUpdated(sample);
+        ok=ok&&table->item(45,3)->text()=="1";
+        worker->pointsUpdated(QVector<int>(47,-1));
+        for(int r=0;r<47;++r) ok=ok&&table->item(r,3)->text()==QStringLiteral("失效");
+        search->setText("M28.1"); int visible=0; for(int r=0;r<47;++r) if(!table->isRowHidden(r)) ++visible;
+        ok=ok&&visible==1; search->clear();
+        worker->statusText("Disconnected");
+        for(int r=0;r<47;++r) ok=ok&&table->item(r,3)->text()==QStringLiteral("未知");
+        QFile result(QCoreApplication::applicationDirPath()+"/ui-test-result.txt"); result.open(QIODevice::WriteOnly);
+        result.write(ok?"PASS: 47 rows, bit state, invalidation, filter and disconnected state\n":"FAIL\n"); result.close();
+        table->selectRow(13); status->setText(QStringLiteral("离线界面检查 · 未连接 PLC"));
+        grab().save(QCoreApplication::applicationDirPath()+"/control-preview.png");
+        qApp->exit(ok?0:4);
+    });
+    if(qApp->arguments().contains("--interval-5")) interval->setValue(5);
+    if(qApp->arguments().contains("--smoke-test")) { QTimer::singleShot(200,button,&QPushButton::click); QTimer::singleShot(15000,qApp,[]{qApp->exit(3);}); }
+}
+MainWindow::~MainWindow(){ QMetaObject::invokeMethod(worker,"disconnectPlc",Qt::BlockingQueuedConnection); thread.quit(); thread.wait(); }
+void MainWindow::invalidate(){if(timingLabel) timingLabel->setText(QStringLiteral("实际刷新间隔：— ｜ 读取耗时：—"));setFaultValue(-1);dataValid=false; updateWriteControls();for(int r=0;r<table->rowCount();++r){table->item(r,3)->setText(QStringLiteral("未知")); table->item(r,3)->setForeground(QColor("#777777"));} updated->setText(QStringLiteral("当前无有效数据"));}
+void MainWindow::filter(){for(int r=0;r<table->rowCount();++r){bool match=false;for(int c=0;c<6;++c) match=match||table->item(r,c)->text().contains(search->text(),Qt::CaseInsensitive);table->setRowHidden(r,!match||(group->currentIndex()>0&&table->item(r,0)->text()!=group->currentText()));}updateWriteControls();}
 
-    Point p; p.area=area; p.byteIndex=byteIndex; p.bitIndex=bitIndex; p.text=norm;
-    m_points.push_back(p);
-    refreshTiles();
-    QString saveErr;
-    if (!savePointConfig(&saveErr)) {
-        QMessageBox::warning(this, "Save config failed", saveErr);
-    }
 
-    int areaInt = (area==Area::I) ? 0 : (area==Area::Q) ? 1 : 2;
-    QMetaObject::invokeMethod(m_worker, "addPoint", Qt::QueuedConnection,
-                              Q_ARG(int, areaInt), Q_ARG(int, byteIndex), Q_ARG(int, bitIndex), Q_ARG(QString, norm));
+
+void MainWindow::setupWriteControls(QVBoxLayout* layout) {
+    auto row=new QHBoxLayout; layout->addLayout(row);
+    writeMode=new QCheckBox(QStringLiteral("开启写入模式")); feedbackUnlock=new QCheckBox(QStringLiteral("解锁反馈位（可能被 PLC 覆盖）"));
+    row->addWidget(writeMode); row->addWidget(feedbackUnlock); row->addStretch();
+    selected=new QLabel(QStringLiteral("请选择一个点位")); selected->setWordWrap(true); layout->addWidget(selected);
+    auto buttons=new QHBoxLayout; layout->addLayout(buttons);
+    writeZero=new QPushButton(QStringLiteral("写 0")); writeOneButton=new QPushButton(QStringLiteral("写 1"));
+    writeResult=new QLabel(QStringLiteral("单次写入后立即读回；ERR_RESET 按普通位保持 0/1"));
+    buttons->addWidget(writeZero); buttons->addWidget(writeOneButton); buttons->addWidget(writeResult,1);
+    auto pulse=new QHBoxLayout; layout->addLayout(pulse);
+    pulse->addWidget(new QLabel(QStringLiteral("FeedingDog · M22.1")));
+    period=new QSpinBox; period->setRange(5,600000); period->setValue(1000); period->setSuffix(" ms");
+    width=new QSpinBox; width->setRange(1,599999); width->setValue(100); width->setSuffix(" ms");
+    pulse->addWidget(new QLabel(QStringLiteral("周期（上升沿间隔）"))); pulse->addWidget(period);
+    pulse->addWidget(new QLabel(QStringLiteral("高电平时长"))); pulse->addWidget(width);
+    pulseStart=new QPushButton(QStringLiteral("启动脉冲")); pulseStop=new QPushButton(QStringLiteral("停止并置 0"));
+    pulse->addWidget(pulseStart); pulse->addWidget(pulseStop); pulseLabel=new QLabel(QStringLiteral("未启动")); pulse->addWidget(pulseLabel,1);
+    auto hint=new QLabel(QStringLiteral("低电平时长 = 周期 − 高电平时长，各至少 1 ms。电脑与网络存在延迟，不能保证硬实时；断网/程序异常时无法保证置 0。")); hint->setWordWrap(true); layout->addWidget(hint);
+    logView=new QPlainTextEdit; logView->setReadOnly(true); logView->setMaximumBlockCount(300); logView->setMaximumHeight(105); layout->addWidget(logView);
+    logPath=worker->logFilePath(); logReady=QFile::exists(logPath);
+    logView->appendPlainText(logReady?QStringLiteral("日志：")+logPath:QStringLiteral("日志目录不可写，写入功能禁用"));
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    connect(table,&QTableWidget::itemSelectionChanged,this,[this]{updateWriteControls();});
+    connect(writeMode,&QCheckBox::toggled,this,[this](bool enabled){
+        if(!enabled) {feedbackUnlock->blockSignals(true);feedbackUnlock->setChecked(false);feedbackUnlock->blockSignals(false);}
+        QMetaObject::invokeMethod(worker,"setWriteMode",Qt::QueuedConnection,Q_ARG(bool,enabled),Q_ARG(bool,feedbackUnlock->isChecked())); updateWriteControls();
+    });
+    connect(feedbackUnlock,&QCheckBox::toggled,this,[this](bool enabled){
+        QMetaObject::invokeMethod(worker,"setWriteMode",Qt::QueuedConnection,Q_ARG(bool,writeMode->isChecked()),Q_ARG(bool,enabled)); updateWriteControls();
+    });
+    connect(writeZero,&QPushButton::clicked,this,[this]{submitWrite(0);});
+    connect(writeOneButton,&QPushButton::clicked,this,[this]{submitWrite(1);});
+    connect(worker,&PlcWorker::oneWriteResult,this,[this](bool ok,const QString& text){writePending=false;writeResult->setText((ok?QStringLiteral("完成："):QStringLiteral("未确认："))+text);updateWriteControls();});
+    connect(worker,&PlcWorker::writeModeReset,this,[this]{
+        writeMode->blockSignals(true); feedbackUnlock->blockSignals(true); writeMode->setChecked(false);feedbackUnlock->setChecked(false);
+        writeMode->blockSignals(false);feedbackUnlock->blockSignals(false); updateWriteControls();
+    });
+    connect(worker,&PlcWorker::actionLog,this,[this](const QString& text){ logView->appendPlainText(text); });
+    connect(pulseStart,&QPushButton::clicked,this,[this]{
+        if(!pulseStart->isEnabled()) return; pulseRunning=true; updateWriteControls();
+        QMetaObject::invokeMethod(worker,"startPulse",Qt::QueuedConnection,Q_ARG(int,period->value()),Q_ARG(int,width->value()));
+    });
+    connect(pulseStop,&QPushButton::clicked,this,[this]{QMetaObject::invokeMethod(worker,"stopPulse",Qt::QueuedConnection);});
+    connect(worker,&PlcWorker::pulseState,this,[this](bool running,const QString& text){pulseRunning=running;pulseLabel->setText(text);updateWriteControls();});
+    connect(period,qOverload<int>(&QSpinBox::valueChanged),this,[this]{updateWriteControls();});
+    connect(width,qOverload<int>(&QSpinBox::valueChanged),this,[this]{updateWriteControls();});
+    auto stale=new QTimer(this); stale->setInterval(250); connect(stale,&QTimer::timeout,this,[this]{updateWriteControls();});stale->start();
+    updateWriteControls();
+}
+void MainWindow::updateWriteControls() {
+    if(faultValue>=0&&faultAge.isValid()&&faultAge.elapsed()>qMax(1000,monitorInterval*3)) setFaultValue(-1);
+    if(!writeMode) return;
+    bool ready=connected&&dataValid&&dataAge.isValid()&&dataAge.elapsed()<=qMax(1000,monitorInterval*3)&&logReady;
+    writeMode->setEnabled(ready||writeMode->isChecked());
+    feedbackUnlock->setEnabled(ready&&writeMode->isChecked()&&!writePending);
+    int r=table->currentRow(); bool visible=r>=0&&!table->isRowHidden(r);
+    if(visible) selected->setText(QStringLiteral("选中：%1 ｜ %2 ｜ %3 ｜ 当前值 %4 ｜ %5")
+        .arg(table->item(r,1)->text(),table->item(r,2)->text(),table->item(r,4)->text(),table->item(r,3)->text(),table->item(r,5)->text()));
+    else selected->setText(QStringLiteral("请选择一个可见点位"));
+    bool feedingDogSelected=visible&&table->item(r,2)->text()=="M22.1";
+    bool allowed=ready&&writeMode->isChecked()&&visible&&(r<20||feedbackUnlock->isChecked())&&!(pulseRunning&&feedingDogSelected)&&!writePending;
+    const QString writeHint=pulseRunning&&feedingDogSelected?QStringLiteral("FeedingDog 正由脉冲控制，请先停止脉冲"):QString();
+    writeZero->setToolTip(writeHint);writeOneButton->setToolTip(writeHint);
+    writeZero->setEnabled(allowed); writeOneButton->setEnabled(allowed);
+    pulseStart->setEnabled(ready&&writeMode->isChecked()&&!pulseRunning&&!writePending&&period->value()-width->value()>=1);
+    pulseStop->setEnabled(pulseRunning); period->setEnabled(!pulseRunning);width->setEnabled(!pulseRunning);
+}
+void MainWindow::submitWrite(int value) {
+    updateWriteControls(); if(!writeZero->isEnabled()) return;
+    QString address=table->item(table->currentRow(),2)->text(); writePending=true;updateWriteControls();
+    writeResult->setText(QStringLiteral("正在写入 %1 = %2，并读回…").arg(address).arg(value));
+    QMetaObject::invokeMethod(worker,"writeOne",Qt::QueuedConnection,Q_ARG(QString,address),Q_ARG(int,value));
 }
 
-void MainWindow::onRemoveClicked() {
-    Area area; int byteIndex=0, bitIndex=0; QString norm, err;
-    if (!parseAddrLocal(ui->lineEditAddr->text(), area, byteIndex, bitIndex, norm, err)) {
-        QMessageBox::warning(this, "Hint", "Input address to remove, e.g. I0.0");
-        return;
-    }
 
-    int idx = -1;
-    for (int i=0; i<m_points.size(); ++i) {
-        if (m_points[i].text.compare(norm, Qt::CaseInsensitive) == 0) { idx = i; break; }
-    }
-    if (idx < 0) {
-        QMessageBox::information(this, "Hint", "Not found in monitor list.");
-        return;
-    }
 
-    m_points.removeAt(idx);
-    refreshTiles();
-    QString saveErr;
-    if (!savePointConfig(&saveErr)) {
-        QMessageBox::warning(this, "Save config failed", saveErr);
-    }
 
-    QMetaObject::invokeMethod(m_worker, "removePoint", Qt::QueuedConnection, Q_ARG(int, idx));
-}
-
-void MainWindow::onReadOneClicked() {
-    QString addr = ui->lineEditRwAddr->text().trimmed();
-    if (addr.isEmpty()) { QMessageBox::warning(this, "Hint", "Please input address."); return; }
-
-    ui->lblRwResult->setText("Reading...");
-    QMetaObject::invokeMethod(m_worker, "readOne", Qt::QueuedConnection, Q_ARG(QString, addr));
-}
-
-void MainWindow::onWriteOneClicked() {
-    QString addr = ui->lineEditRwAddr->text().trimmed();
-    QString vStr = ui->lineEditWriteValue->text().trimmed();
-    if (addr.isEmpty()) { QMessageBox::warning(this, "Hint", "Please input address."); return; }
-    if (vStr.isEmpty()) { QMessageBox::warning(this, "Hint", "Please input write value 0/1."); return; }
-
-    bool ok=false;
-    int v = vStr.toInt(&ok);
-    if (!ok || !(v==0 || v==1)) {
-        QMessageBox::warning(this, "Hint", "Write value must be 0 or 1.");
-        return;
-    }
-
-    ui->lblRwResult->setText("Writing...");
-    QMetaObject::invokeMethod(m_worker, "writeOne", Qt::QueuedConnection, Q_ARG(QString, addr), Q_ARG(int, v));
-}
-
-void MainWindow::onWorkerConnected(bool ok, const QString& err) {
-    if (!ok) {
-        ui->lblStatus->setText("Disconnected");
-        setUiConnected(false);
-        QMessageBox::critical(this, "Connect failed", err);
-        return;
-    }
-
-    ui->lblStatus->setText("Connected");
-    ui->lblStatus->setProperty("st","ok");
-    ui->lblStatus->style()->unpolish(ui->lblStatus);
-    ui->lblStatus->style()->polish(ui->lblStatus);
-
-    setUiConnected(true);
-
-    // Auto refresh if checked
-    if (ui->chkAuto->isChecked()) {
-        QMetaObject::invokeMethod(m_worker, "setAutoRefresh", Qt::QueuedConnection,
-                                  Q_ARG(bool, true), Q_ARG(int, ui->spinInterval->value()));
-    }
-}
-
-void MainWindow::onStatusText(const QString& s) {
-    ui->lblStatus->setText(s);
-}
-
-void MainWindow::onPointsUpdated(const QVector<int>& values) {
-    for (int i=0; i<16; ++i) {
-        if (i < m_points.size() && i < values.size()) setTileValue(i, values[i]);
-        else setTileValue(i, -1);
-    }
-}
-
-void MainWindow::onOneReadResult(bool ok, int value, const QString& err) {
-    if (!ok) {
-        ui->lblRwResult->setText("Read failed: " + err);
-        return;
-    }
-    ui->lblRwResult->setText(QString("Read OK: %1").arg(value));
-    ui->lineEditWriteValue->setText(QString::number(value)); // 读到的值顺便填入写入框，方便“读后改”
-}
-
-void MainWindow::onOneWriteResult(bool ok, const QString& err) {
-    if (!ok) {
-        ui->lblRwResult->setText("Write failed: " + err);
-        return;
-    }
-    ui->lblRwResult->setText("Write OK");
-}
-#include <QCloseEvent>
-
-void MainWindow::closeEvent(QCloseEvent* e)
-{
-    savePointConfig();
-    // 关闭时先禁止UI触发新的调用
-    ui->chkAuto->blockSignals(true);
-    ui->spinInterval->blockSignals(true);
-
-    if (m_worker) {
-        QMetaObject::invokeMethod(m_worker, "setAutoRefresh", Qt::QueuedConnection,
-                                  Q_ARG(bool, false), Q_ARG(int, ui->spinInterval->value()));
-        QMetaObject::invokeMethod(m_worker, "disconnectPlc", Qt::QueuedConnection);
-    }
-
-    QMainWindow::closeEvent(e);
+void MainWindow::setFaultValue(int value) {
+    faultValue=value;
+    if(value>=0) faultAge.restart(); else faultAge.invalidate();
+    QString text=value==1?QStringLiteral("1 · 故障"):value==0?QStringLiteral("0 · 无故障"):QStringLiteral("状态未知");
+    QString color=value==1?"#b42318":value==0?"#16794b":"#667085";
+    QString bg=value==1?"#fee4e2":value==0?"#dcfae6":"#eaecf0";
+    faultIndicator->setText(QStringLiteral("● M5.0 故障标志 ｜ ")+text);
+    faultIndicator->setStyleSheet(QString("QLabel { color:%1; background:%2; border-radius:6px; padding:8px; font-weight:600; }").arg(color,bg));
+    faultIndicator->setToolTip(QStringLiteral("独立只读监控；1=故障，0=无故障。不会自动改变其他点位或停止喂狗。"));
 }

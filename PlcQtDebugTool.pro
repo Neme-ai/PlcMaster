@@ -3,6 +3,7 @@ QT       += core gui
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++11
+win32-msvc*: QMAKE_CXXFLAGS += /utf-8
 
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
@@ -31,33 +32,27 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 INCLUDEPATH += $$PWD/thirdparty/snap7/include
 LIBS += -L$$PWD/thirdparty/snap7/lib/x64 -lsnap7 -lWs2_32
 
-win32 {
-    SNAP7_DLL = $$shell_path($$PWD/thirdparty/snap7/bin/x64/snap7.dll)
-    QSS_FILE  = $$shell_path($$PWD/style/light.qss)
+# Copy runtime files beside the executable for both Debug and Release.
 
-    # 输出目录：优先使用 DESTDIR（如果你设置了），否则沿用 OUT_PWD/debug|release
-    isEmpty(DESTDIR) {
-        CONFIG(debug, debug|release) {
-            APP_DIR = $$shell_path($$OUT_PWD/debug)
-        } else {
-            APP_DIR = $$shell_path($$OUT_PWD/release)
-        }
+win32 {
+    SNAP7_DLL = $$PWD/thirdparty/snap7/bin/x64/snap7.dll
+    APP_STYLE = $$PWD/style/light.qss
+
+    CONFIG(debug, debug|release) {
+        APP_DIR = $$OUT_PWD/debug
     } else {
-        APP_DIR = $$shell_path($$DESTDIR)
+        APP_DIR = $$OUT_PWD/release
     }
 
-    message(SNAP7_DLL=$$SNAP7_DLL)
-    message(QSS_FILE=$$QSS_FILE)
-    message(APP_DIR=$$APP_DIR)
-
-    QMAKE_POST_LINK += $$quote(if not exist \"$$APP_DIR\" mkdir \"$$APP_DIR\") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(copy /y \"$$SNAP7_DLL\" \"$$APP_DIR\\snap7.dll\") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(copy /y \"$$QSS_FILE\"  \"$$APP_DIR\\light.qss\") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(dir \"$$APP_DIR\\snap7.dll\") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(dir \"$$APP_DIR\\light.qss\")
+    # qmake concatenates += values with spaces; explicit newlines keep commands separate.
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_quote($$shell_path($$SNAP7_DLL)) $$shell_quote($$shell_path($$APP_DIR/snap7.dll)) $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_quote($$shell_path($$APP_STYLE)) $$shell_quote($$shell_path($$APP_DIR/light.qss))
 }
 
 DISTFILES += \
     style/light.qss
 
 
+
+
+RESOURCES += points.qrc

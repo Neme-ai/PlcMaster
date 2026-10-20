@@ -1,0 +1,9 @@
+QT += core
+QT -= gui
+CONFIG += console c++11
+CONFIG -= app_bundle
+TARGET = control_tests
+QMAKE_CXXFLAGS += /utf-8
+INCLUDEPATH += .. ../thirdparty/snap7/include
+SOURCES += control_tests.cpp ../plcworker.cpp ../plcsnap7client.cpp
+HEADERS += ../plcworker.h ../plcsnap7client.h

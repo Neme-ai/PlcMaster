@@ -1,0 +1,47 @@
+Power_380V|M20.0|380V 电源控制|控制与使能
+VC_ST_Rol|M20.1|转台内环使能|控制与使能
+VC_ST_Pit|M20.2|转台中环使能|控制与使能
+VC_ST_Yaw|M20.3|转台外环使能|控制与使能
+VC_ST_X|M20.4|X 向使能|控制与使能
+VC_ST_Y|M20.5|Y 向使能|控制与使能
+VC_ST_Z|M20.6|Z 向使能|控制与使能
+LMTEN_Rol|M20.7|内环限位使能|控制与使能
+LMTEN_Pit|M21.0|中环限位使能|控制与使能
+LMTEN_Yaw|M21.1|外环限位使能|控制与使能
+LMTEN_X|M21.2|X 光电限位使能|控制与使能
+LMTEN_Y|M21.3|Y 光电限位使能|控制与使能
+LMTEN_Z|M21.4|Z 光电限位使能|控制与使能
+ERR_RESET|M21.5|故障复位|控制与使能
+XY_SpdToZero|M21.6|XY 进行减速规划（预留）|控制与使能
+VC_Ctrl_First|M21.7|VC 率先使用线位移标志|控制与使能
+EnableDog|M22.0|看门狗使能|控制与使能
+FeedingDog|M22.1|喂狗脉冲|控制与使能
+Sub_Power|M22.2|下位机上电|控制与使能
+I_Prg_Error|M22.3|外部故障输入|控制与使能
+RUN_POL_M|M25.0|内环驱动器 RUN 透传信号|驱动器运行
+RUN_PIT_M|M25.1|中环驱动器 RUN 透传信号|驱动器运行
+RUN_YAW_M|M25.2|外环驱动器 RUN 透传信号|驱动器运行
+RUN_X_M|M25.3|X 向驱动器 RUN 透传信号|驱动器运行
+RUN_Y_M|M25.4|Y 向驱动器 RUN 透传信号|驱动器运行
+RUN_Z_M|M25.5|Z 向驱动器 RUN 透传信号|驱动器运行
+ERR_POL_M|M25.6|内环驱动器 ERR|故障与急停
+ERR_PIT_M|M25.7|中环驱动器 ERR|故障与急停
+ERR_YAW_M|M26.0|外环驱动器 ERR|故障与急停
+ERR_X_M|M26.1|X 向驱动器 ERR|故障与急停
+ERR_Y_M|M26.2|Y 向驱动器 ERR|故障与急停
+ERR_Z_M|M26.3|Z 向驱动器 ERR|故障与急停
+STOP_M|M26.4|急停信息|故障与急停
+KEB_BRAKE|M26.5|有驱动器处于制动状态|故障与急停
+HandCrl_ST_First|M26.6|手控小盒抢先使用线位移使能标志|控制与使能
+SubPowBack|M26.7|反馈给上位机的下位机上电状态|电源反馈
+Rol_Keb_PowOk|M27.0|三轴台380V供电透传信号|电源反馈
+X_Keb_PowOk|M27.1|XYZ导轨380V供电透传信号|电源反馈
+Limit_POL_M|M27.2|内环驱动器光电限位透传信号|限位
+Limit_PIT_M|M27.3|中环驱动器光电限位透传信号|限位
+Limit_YAW_M|M27.4|外环驱动器光电限位透传信号|限位
+Limit_X_M|M27.5|X 向驱动器光电限位透传信号|限位
+Limit_Y_M|M27.6|Y 向驱动器光电限位透传信号|限位
+Limit_Z_M|M27.7|Z 向驱动器光电限位透传信号|限位
+LCK_Pol_M|M28.0|内环自锁透传信号|自锁
+LCK_Pit_M|M28.1|中环自锁透传信号|自锁
+LCK_Yaw_M|M28.2|外环自锁透传信号|自锁

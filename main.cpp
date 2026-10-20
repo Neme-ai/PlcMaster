@@ -20,29 +20,21 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
 
     qRegisterMetaType<QVector<int>>("QVector<int>");
+    qRegisterMetaType<QByteArray>("QByteArray");   // 可选，保险
+
+    qDebug() << "CurrentPath =" << QDir::currentPath();
+    qDebug() << "AppDirPath  =" << QCoreApplication::applicationDirPath();
 
     a.setStyle("Fusion");
 
+    // ✅ 用 exe 所在目录拼绝对路径
     QString qssPath = QCoreApplication::applicationDirPath() + "/light.qss";
-
-#ifdef QT_DEBUG
-    qDebug() << "CurrentPath =" << QDir::currentPath();
-    qDebug() << "AppDirPath  =" << QCoreApplication::applicationDirPath();
     qDebug() << "QSS path    =" << qssPath;
-#endif
+    qDebug() << "QSS exists? =" << QFile::exists(qssPath);
 
-    if (QFile::exists(qssPath)) {
-        QString qss = loadTextFile(qssPath);
-#ifdef QT_DEBUG
-        qDebug() << "QSS length  =" << qss.size();
-#endif
-        if (!qss.isEmpty()) a.setStyleSheet(qss);
-    } else {
-#ifdef QT_DEBUG
-        qDebug() << "QSS not found.";
-#endif
-    }
-
+    QString qss = loadTextFile(qssPath);
+    qDebug() << "QSS length  =" << qss.size();
+    a.setStyleSheet(qss);
     MainWindow w;
     w.show();
     return a.exec();

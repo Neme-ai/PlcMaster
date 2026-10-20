@@ -65,21 +65,11 @@ bool PlcSnap7Client::writeM(int startByte, const QByteArray& in) {
 }
 
 bool PlcSnap7Client::writeMBit(int mByte, int bit, bool value) {
-    if (!m_connected) return false;
-    if (bit < 0 || bit > 7) return false;
-
-    unsigned char b = 0;
-    m_lastErr = Cli_MBRead(m_cli, mByte, 1, &b);
-    if (m_lastErr != 0) return false;
-
-    unsigned char mask = (unsigned char)(1u << bit);
-    if (value) b |= mask;
-    else b &= (unsigned char)(~mask);
-
-    m_lastErr = Cli_MBWrite(m_cli, mByte, 1, &b);
-    return (m_lastErr == 0);
+    if (!m_connected || mByte < 0 || bit < 0 || bit > 7) return false;
+    unsigned char data = value ? 1 : 0;
+    m_lastErr = Cli_WriteArea(m_cli, S7AreaMK, 0, mByte * 8 + bit, 1, S7WLBit, &data);
+    return m_lastErr == 0;
 }
-
 bool PlcSnap7Client::writeQBit(int qByte, int bit, bool value) {
     if (!m_connected) return false;
     if (bit < 0 || bit > 7) return false;
